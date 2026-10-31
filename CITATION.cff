@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use Ceft in your research or project, please cite it as below."
+authors:
+  - family-names: "Patel"
+    given-names: "Yug"
+    email: "yug.dev04@gmail.com"
+    website: "https://github.com/Yug-dev0"
+title: "Ceft: Multimodal Data Pipeline for Provenance-Aware Retrieval-Augmented Generation"
+version: "0.3.0"
+date-released: 2026-10-25
+url: "https://github.com/Yug-dev0/CEFT"
+repository-code: "https://github.com/Yug-dev0/CEFT"
+license: MIT

@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ceft"
+version = "0.3.0"
+description = "Multimodal data pipeline for RAG — ingesting video, audio, image, PDF and structured data with precise spatiotemporal provenance and cross-modal entity linking."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Yug Patel", email = "yug.dev04@gmail.com" }
+]
+maintainers = [
+    { name = "Yug Patel", email = "yug.dev04@gmail.com" }
+]
+keywords = [
+    "rag",
+    "multimodal",
+    "knowledge-graph",
+    "video-processing",
+    "audio-transcription",
+    "provenance",
+    "fastapi",
+    "chromadb",
+    "sqlite"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Database :: Database Engines/Servers"
+]
+
+[project.urls]
+Homepage = "https://github.com/Yug-dev0/CEFT"
+Repository = "https://github.com/Yug-dev0/CEFT"
+Issues = "https://github.com/Yug-dev0/CEFT/issues"
+Documentation = "https://github.com/Yug-dev0/CEFT#readme"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"

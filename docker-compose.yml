@@ -1,0 +1,16 @@
+# docker compose up --build    then open http://localhost:8000/app
+services:
+  ceft:
+    build: .
+    image: ceft:latest
+    ports:
+      - "${CEFT_PORT:-${WEFT_PORT:-8000}}:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ceft-data:/data
+    restart: unless-stopped
+
+volumes:
+  ceft-data:

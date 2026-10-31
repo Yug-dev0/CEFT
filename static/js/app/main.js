@@ -1,0 +1,176 @@
+// Workspace shell: hash router, shared store, sidebar status, shortcuts.
+
+import { api, getApiKey, setApiKey } from "./api.js";
+import { closeEvidence } from "./evidence.js";
+import { h, clear, toast, fill } from "./ui.js";
+import { renderAsk } from "./views/ask.js";
+import { renderLibrary } from "./views/library.js";
+import { renderSource } from "./views/source.js";
+import { renderEntities, renderEntity } from "./views/entities.js";
+import { renderEvaluate } from "./views/evaluate.js";
+import { renderGraph } from "./views/graph.js";
+import { startTour } from "./tour.js";
+
+export const store = {
+  stats: null,
+  health: null,
+  async refresh() {
+    const [stats, health] = await Promise.allSettled([api.stats(), api.health()]);
+    if (stats.status === "fulfilled") this.stats = stats.value;
+    if (health.status === "fulfilled") this.health = health.value;
+    renderStatus(health.status === "fulfilled");
+    return this.stats;
+  },
+};
+
+const ROUTES = [
+  [/^\/?$/, "ask", renderAsk, "Ask"],
+  [/^\/ask$/, "ask", renderAsk, "Ask"],
+  [/^\/library$/, "library", renderLibrary, "Library"],
+  [/^\/sources\/([^/]+)$/, "library", renderSource, "Source"],
+  [/^\/entities$/, "entities", renderEntities, "Entities"],
+  [/^\/entities\/([^/]+)$/, "entities", renderEntity, "Entity"],
+  [/^\/graph$/, "graph", renderGraph, "Graph"],
+  [/^\/graph\/([^/]+)$/, "graph", renderGraph, "Graph"],
+  [/^\/evaluate$/, "evaluate", renderEvaluate, "Evaluation"],
+];
+
+const view = document.getElementById("view");
+let cleanup = null;
+let silentNext = false;
+
+export function navigate(hash, { replace = false, silent = false } = {}) {
+  if (replace) {
+    // replaceState never fires hashchange, so route manually unless silent.
+    history.replaceState(null, "", hash);
+    if (!silent) route();
+    return;
+  }
+  if (location.hash === hash) { if (!silent) route(); return; }
+  if (silent) silentNext = true;
+  location.hash = hash;
+}
+
+function parseHash() {
+  const raw = location.hash.replace(/^#/, "") || "/ask";
+  const [path, query = ""] = raw.split("?");
+  return { path, params: new URLSearchParams(query) };
+}
+
+function route() {
+  if (silentNext) { silentNext = false; return; }
+  const { path, params } = parseHash();
+  const match = ROUTES.find(([pattern]) => pattern.test(path));
+  cleanup?.();
+  cleanup = null;
+  closeEvidence();
+  clear(view);
+  document.body.classList.remove("nav-open");
+
+  if (!match) {
+    view.append(h("div", { class: "empty" }, h("h3", {}, "Page not found"), h("a", { class: "btn", href: "#/ask" }, "Go to Ask")));
+    return;
+  }
+  if (params.get("tour") === "1") {
+    // #/ask?tour=1 (from the landing page) starts the tour once, then drops the flag.
+    params.delete("tour");
+    const qs = params.toString();
+    history.replaceState(null, "", `#${path}${qs ? `?${qs}` : ""}`);
+    startTour({ navigate, store });
+  }
+  const [pattern, nav, render, title] = match;
+  const args = path.match(pattern).slice(1).map(decodeURIComponent);
+  document.querySelectorAll("[data-nav]").forEach((link) => {
+    const on = link.dataset.nav === nav;
+    link.classList.toggle("active", on);
+    if (on) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
+  });
+  document.title = `${title} · Ceft`;
+  cleanup = render(view, params, ...args) || null;
+  view.focus({ preventScroll: true });
+  window.scrollTo(0, 0);
+}
+
+function renderStatus(reachable) {
+  const host = document.getElementById("status");
+  if (!host) return;
+  const s = store.stats;
+  const p = store.health?.providers;
+  const model = providerName(p?.llm);
+  const row = (label, on, value) => h("li", {}, h("i", { class: `dot ${on ? "on" : "off"}` }), h("span", {}, label), value ? h("span", { class: "faint" }, value) : null);
+  fill(host, 
+    reachable
+      ? h("ul", { class: "status-list" },
+        row("Model", Boolean(model), model || "none"),
+        row("Vision", p?.vision, p?.vision ? model : "off"),
+        row("Transcription", p?.transcription, p?.transcription ? "Groq" : "off"),
+        row("Speakers", p?.speakers, p?.speakers ? "on" : (p?.llm === "claude" || p?.llm === "anthropic") ? "needs Gemini" : "off"),
+        row("Entities", true, p?.entities === "llm" ? "LLM" : "patterns"),
+      )
+      : h("p", { class: "status-down" }, h("i", { class: "dot off" }), "Server unreachable"),
+    s ? h("p", { class: "status-counts num" }, `${s.sources} sources · ${s.segments} segments`) : null,
+  );
+}
+
+document.addEventListener("keydown", (event) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
+  if ((event.key === "k" && (event.metaKey || event.ctrlKey)) || (event.key === "/" && !typing)) {
+    event.preventDefault();
+    const { path } = parseHash();
+    if (path !== "/ask" && path !== "/") navigate("#/ask");
+    requestAnimationFrame(() => document.querySelector(".ask-input")?.focus());
+  }
+});
+
+// A server started with CEFT_API_KEY (or WEFT_API_KEY) answers 401 to writes without the key:
+// ask for it once, keep it in this browser, and let the user retry.
+let keyDialog = null;
+function askForKey() {
+  if (keyDialog?.open) return;
+  if (!keyDialog) {
+    const input = h("input", { class: "input", type: "password", autocomplete: "off", "aria-label": "API key", placeholder: "API key" });
+    keyDialog = h("dialog", { class: "key-dialog card" },
+      h("form", { method: "dialog", class: "key-form" },
+        h("h3", {}, "This server needs an API key"),
+        h("p", { class: "muted" }, "Uploads, questions and other changes need the key the server was started with (CEFT_API_KEY). It is kept in this browser only."),
+        input,
+        h("div", { class: "key-actions" },
+          h("button", { class: "btn btn-ghost", value: "cancel", type: "submit" }, "Cancel"),
+          h("button", { class: "btn btn-primary", value: "save", type: "submit" }, "Save key"),
+        ),
+      ),
+    );
+    keyDialog.addEventListener("close", () => {
+      if (keyDialog.returnValue === "save" && input.value.trim()) {
+        setApiKey(input.value.trim());
+        toast("Key saved. Try that again.", "ok");
+      }
+      input.value = "";
+    });
+    document.body.append(keyDialog);
+  }
+  keyDialog.showModal();
+}
+const onAuthRequired = () => {
+  if (getApiKey()) toast("The saved API key was rejected.", "err");
+  askForKey();
+};
+window.addEventListener("ceft:auth-required", onAuthRequired);
+window.addEventListener("weft:auth-required", onAuthRequired);
+
+document.getElementById("nav-toggle")?.addEventListener("click", () => document.body.classList.toggle("nav-open"));
+document.querySelector(".side-scrim")?.addEventListener("click", () => document.body.classList.remove("nav-open"));
+window.addEventListener("hashchange", route);
+window.addEventListener("unhandledrejection", (event) => {
+  if (event.reason?.name === "AbortError") return;
+  console.error(event.reason);
+  toast(event.reason?.message || "Something went wrong.", "err");
+});
+
+store.refresh().finally(route);
+setInterval(() => { if (!document.hidden) store.refresh(); }, 30000);
+
+/** Display name of the configured model provider, or "" when none. */
+export function providerName(id) {
+  return { claude: "Claude", gemini: "Gemini", anthropic: "Claude", google: "Gemini" }[id] || "";
+}

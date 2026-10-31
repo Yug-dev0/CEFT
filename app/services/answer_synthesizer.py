@@ -1,0 +1,320 @@
+"""Grounded answer synthesis over multimodal retrieval evidence.
+
+The retrieval endpoint alone (embed query -> nearest neighbours) proves
+*search* works. It does not prove the system actually *connects* evidence
+across modalities to answer a question. This module closes that gap: it
+takes the top-k ``KnowledgeNode`` hits -- which may span video transcript,
+video frame descriptions, image OCR/visual summaries, and PDF page text/
+diagram summaries -- and asks an LLM to synthesize one grounded answer that
+explicitly cites which modality and locator each piece of evidence came
+from, and to say plainly when the evidence does not support an answer.
+
+If no LLM key is configured (offline grading / CI), ``synthesize_answer``
+falls back to a deterministic extractive summary so the endpoint never
+breaks, while still surfacing per-source evidence in ``answer.sources``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Any
+
+
+class AnswerSynthesisError(RuntimeError):
+    """Raised only for truly unexpected failures; callers should prefer the
+    deterministic fallback over raising, so this is rarely used."""
+
+
+@dataclass
+class SynthesizedAnswer:
+    answer: str
+    grounded: bool
+    sources: list[dict[str, Any]] = field(default_factory=list)
+    method: str = "llm"
+
+
+def _fmt_seconds(value: Any) -> str:
+    try:
+        total = max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return "?"
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def _evidence_block(hits: list[dict[str, Any]]) -> str:
+    """Render each hit as a numbered, modality-tagged evidence card.
+
+    Besides text and visuals, a card carries who spoke, the exact sentence
+    that matched, the OCR text that matched, and, for evidence pulled in
+    through the graph, which card it is linked to and why.
+    """
+    index_of = {hit.get("id"): i for i, hit in enumerate(hits, start=1)}
+    lines = []
+    for i, hit in enumerate(hits, start=1):
+        metadata = hit.get("metadata") or {}
+        modality = metadata.get("modality") or "unknown"
+        source = hit.get("source") or metadata.get("source") or "unknown source"
+        locator = hit.get("timestamp") or metadata.get("timestamp") or "n/a"
+        transcript = (hit.get("transcript") or metadata.get("transcript") or "").strip()
+        visual = (metadata.get("visual_summary") or "").strip()
+        parts = [f"[Evidence {i}] modality={modality} source={source} locator={locator}"]
+        if metadata.get("speakers"):
+            parts.append(f"  speakers: {', '.join(metadata['speakers'])}")
+        if transcript:
+            parts.append(f"  text/transcript: {transcript[:1500]}")
+        if visual:
+            parts.append(f"  visual_summary: {visual[:1200]}")
+        span = hit.get("matched_span")
+        if span and span.get("text"):
+            who = f" ({span['speaker']})" if span.get("speaker") else ""
+            parts.append(
+                f"  best matching moment: {_fmt_seconds(span.get('start_seconds'))}"
+                f"-{_fmt_seconds(span.get('end_seconds'))}{who}: {span['text']}"
+            )
+        regions = hit.get("matched_regions") or []
+        if regions:
+            parts.append("  matching text on screen/page: " + " | ".join(r["text"] for r in regions))
+        via = hit.get("via")
+        if via:
+            linked = index_of.get(via.get("from_segment_id"))
+            target = f"Evidence {linked}" if linked else "another card"
+            shared = ", ".join(via.get("shared_entities") or [])
+            parts.append(
+                f"  linked to {target} by '{via.get('relation')}'" + (f" (shared: {shared})" if shared else "")
+            )
+        lines.append("\n".join(parts))
+    return "\n\n".join(lines)
+
+
+_EXTRACTIVE_QUOTES = 3
+
+
+def _clip(text: str, limit: int = 220) -> str:
+    """First sentence or two of ``text``, at most ``limit`` characters."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text.rfind(". ", 0, limit)
+    return text[: cut + 1] if cut >= 40 else text[: limit - 1].rstrip() + "\u2026"
+
+
+def _fallback_answer(query: str, hits: list[dict[str, Any]]) -> SynthesizedAnswer:
+    """Deterministic, no-LLM extractive answer used when no API key is set.
+
+    Quotes the matched sentence, matched on-screen text, or opening text of
+    the top few hits, each with its location and an ``(Evidence N)``
+    citation, so the answer stays short and every line can be opened.
+    """
+    if not hits:
+        return SynthesizedAnswer(
+            answer=(
+                "No indexed evidence matched this query closely enough to answer. "
+                "Try rephrasing, or upload source material covering this topic."
+            ),
+            grounded=False,
+            sources=[],
+            method="fallback-empty",
+        )
+
+    # Quote the best few pieces, one short line each, with the same
+    # "(Evidence N)" citations the LLM answer uses so the UI links them.
+    sentences: list[str] = []
+    cited: set[int] = set()
+    for i, hit in enumerate(hits, start=1):
+        if len(sentences) >= _EXTRACTIVE_QUOTES:
+            break
+        metadata = hit.get("metadata") or {}
+        source = hit.get("source") or metadata.get("source") or "unknown source"
+        locator = hit.get("timestamp") or metadata.get("timestamp")
+        span = hit.get("matched_span") or {}
+        regions = hit.get("matched_regions") or []
+        text = (hit.get("transcript") or metadata.get("transcript") or "").strip()
+        visual = (metadata.get("visual_summary") or "").strip()
+        speakers = metadata.get("speakers") or []
+        if span.get("text"):
+            locator = _fmt_seconds(span.get("start_seconds"))
+            quote, kind = span["text"], "said"
+            if span.get("speaker"):
+                speakers = [span["speaker"]]
+        elif regions:
+            quote, kind = " / ".join(r["text"] for r in regions[:2]), "shown"
+        elif text:
+            quote, kind = text, "said" if metadata.get("modality") in ("video", "audio") else "states"
+        elif visual:
+            quote, kind = visual, "shows"
+        else:
+            continue
+        where = f"{source} ({locator})" if locator and locator != "n/a" else source
+        verb = "shows" if kind in ("shown", "shows") else "says"
+        lead = f"In {where}, {speakers[0]} says" if speakers and kind == "said" else f"{where} {verb}"
+        sentences.append(f"{lead}: \u201c{_clip(quote)}\u201d (Evidence {i}).")
+        cited.add(i)
+
+    sources = _sources(hits, cited)
+    answer = (
+        " ".join(sentences)
+        if sentences
+        else "Relevant items were found but contained no extractable text."
+    )
+    return SynthesizedAnswer(answer=answer, grounded=bool(sentences), sources=sources, method="fallback-extractive")
+
+
+def _llm_client() -> Any | None:
+    from app.services import llm
+
+    try:
+        return llm.get_client()
+    except llm.LLMError:
+        return None
+
+
+_SYSTEM_PROMPT = (
+    "You are the answer layer of a multimodal retrieval system. You are given a user "
+    "question and a numbered list of evidence cards. Each card is tagged with its modality "
+    "(video, image, pdf, audio), its source file, and a locator (timestamp or page). Some "
+    "cards have spoken/OCR/page text ('text/transcript'); some have a description of what is "
+    "visually shown ('visual_summary'); some have both.\n\n"
+    "Your job: answer the question using ONLY the evidence given. Actively connect evidence "
+    "across modalities when it strengthens the answer -- e.g. if the transcript from one card "
+    "says a concept was explained and the visual_summary of a nearby card shows the diagram of "
+    "that same concept, say so explicitly and cite both. Do not just restate one card in "
+    "isolation if others corroborate or complete it.\n\n"
+    "Cards may name speakers, the exact matching moment inside a recording, matching text "
+    "on a screen or page, and links between cards (e.g. a diagram that 'depicts' what was "
+    "said). Use these to answer who/when/where parts precisely: name the speaker, give the "
+    "timestamp or page where something was shown.\n\n"
+    "Rules:\n"
+    "- Every factual claim must be traceable to at least one evidence card; cite cards inline "
+    "like (Evidence 2).\n"
+    "- If the evidence does not actually answer the question, say so plainly instead of "
+    "guessing.\n"
+    "- Be concise: 2-5 sentences.\n"
+    "- Return strict JSON: {\"answer\": string, \"grounded\": boolean, "
+    "\"cited_evidence\": [int, ...]}"
+)
+
+
+def synthesize_answer(
+    query: str,
+    hits: list[dict[str, Any]],
+    *,
+    client: Any | None = None,
+    subqueries: list[str] | None = None,
+) -> SynthesizedAnswer:
+    """Produce one grounded, cross-modal answer from retrieval hits.
+
+    Never raises for missing credentials or provider errors -- degrades to
+    the deterministic extractive fallback so ``/query`` stays reliable.
+    """
+    if not hits:
+        return _fallback_answer(query, hits)
+
+    active_client = client or _llm_client()
+    if active_client is None:
+        return _fallback_answer(query, hits)
+
+    prompt = _prompt(query, hits, subqueries) + "\n\nRespond with the JSON object described in your instructions."
+
+    try:
+        from app.services import llm
+
+        parsed = llm.generate_json([prompt], system=_SYSTEM_PROMPT, client=active_client)
+        if not isinstance(parsed, dict):
+            return _fallback_answer(query, hits)
+        answer_text = str(parsed.get("answer", "")).strip()
+        if not answer_text:
+            return _fallback_answer(query, hits)
+        cited = parsed.get("cited_evidence") or []
+        cited_indices = {int(c) for c in cited if isinstance(c, (int, float, str)) and str(c).strip().lstrip("-").isdigit()}
+
+        return SynthesizedAnswer(
+            answer=answer_text,
+            grounded=bool(parsed.get("grounded", True)),
+            sources=_sources(hits, cited_indices),
+            method="llm",
+        )
+    except Exception:
+        # Any provider/parse failure -> never break the query endpoint.
+        return _fallback_answer(query, hits)
+
+
+def _prompt(query: str, hits: list[dict[str, Any]], subqueries: list[str] | None) -> str:
+    parts = ""
+    if subqueries:
+        parts = "The question has these parts; answer each:\n" + "\n".join(f"- {q}" for q in subqueries) + "\n\n"
+    return f"Question: {query}\n\n{parts}Evidence:\n{_evidence_block(hits)}"
+
+
+def _sources(hits: list[dict[str, Any]], cited_indices: set[int]) -> list[dict[str, Any]]:
+    sources = []
+    for i, hit in enumerate(hits, start=1):
+        metadata = hit.get("metadata") or {}
+        sources.append(
+            {
+                "evidence_index": i,
+                "cited": i in cited_indices if cited_indices else True,
+                "modality": metadata.get("modality") or "unknown",
+                "source": hit.get("source") or metadata.get("source") or "unknown source",
+                "locator": hit.get("timestamp") or metadata.get("timestamp") or "n/a",
+                "similarity_score": hit.get("similarity_score"),
+            }
+        )
+    return sources
+
+
+_NOT_ANSWERED = "The evidence does not answer this"
+_STREAM_PROMPT = _SYSTEM_PROMPT.rsplit("- Return strict JSON", 1)[0] + (
+    "- Write plain prose with no JSON, headings or lists, citing cards inline like (Evidence 2).\n"
+    f"- If the evidence does not answer the question, begin with \"{_NOT_ANSWERED}\" and say what is missing."
+)
+_CITED = re.compile(r"Evidence\s*(\d+)", re.IGNORECASE)
+
+
+def stream_answer(
+    query: str,
+    hits: list[dict[str, Any]],
+    *,
+    client: Any | None = None,
+    subqueries: list[str] | None = None,
+) -> Iterator[tuple[str, Any]]:
+    """Yield ``("delta", text)`` chunks as the model writes, then ``("answer", SynthesizedAnswer)``.
+
+    Without a client, or if the stream fails before producing text, the one
+    final ``answer`` event carries the same result ``synthesize_answer`` would.
+    A stream that breaks midway keeps the text written so far.
+    """
+    if not hits:
+        yield "answer", _fallback_answer(query, hits)
+        return
+    active_client = client or _llm_client()
+    if active_client is None:
+        yield "answer", _fallback_answer(query, hits)
+        return
+
+    pieces: list[str] = []
+    try:
+        from app.services import llm
+
+        for text in llm.stream_text([_prompt(query, hits, subqueries)], system=_STREAM_PROMPT, client=active_client):
+            pieces.append(text)
+            yield "delta", text
+    except Exception:
+        if not pieces:
+            yield "answer", synthesize_answer(query, hits, client=active_client, subqueries=subqueries)
+            return
+
+    answer_text = "".join(pieces).strip()
+    if not answer_text:
+        yield "answer", _fallback_answer(query, hits)
+        return
+    cited = {int(n) for n in _CITED.findall(answer_text) if 1 <= int(n) <= len(hits)}
+    yield "answer", SynthesizedAnswer(
+        answer=answer_text,
+        grounded=bool(cited) and not answer_text.startswith(_NOT_ANSWERED),
+        sources=_sources(hits, cited),
+        method="llm",
+    )

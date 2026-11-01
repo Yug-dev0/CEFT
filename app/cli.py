@@ -128,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("stats", help="Print knowledge-store counts.")
     sub.add_parser("reindex", help="Drop and rebuild the vector index from SQLite.")
     sub.add_parser("relink", help="Recompute every cross-modal and temporal link.")
+    sub.add_parser("mcp", help="Run the Model Context Protocol (MCP) stdio server.")
     legacy = sub.add_parser("import-legacy", help="Import the pre-SQLite Chroma collection.")
     legacy.add_argument("--collection", default=LEGACY_COLLECTION)
     args = parser.parse_args(argv)
@@ -141,6 +142,10 @@ def main(argv: list[str] | None = None) -> int:
         from app.services.linker import relink_all
 
         print(json.dumps(relink_all(), indent=2))
+    elif args.command == "mcp":
+        from app.mcp import run_stdio_server
+
+        run_stdio_server()
     elif args.command == "import-legacy":
         counts = import_legacy(args.collection)
         print(f"Imported {counts['sources']} sources / {counts['segments']} segments.")

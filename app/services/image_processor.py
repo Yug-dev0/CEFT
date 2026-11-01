@@ -117,6 +117,80 @@ def normalize_analysis(analysis: Any) -> dict[str, Any]:
     }
 
 
+def local_fallback_analysis(image_path: Path) -> dict[str, Any]:
+    """Offline/Zero-API-key image analysis fallback.
+
+    Extracts basic image properties, attempts local OCR if pytesseract is
+    installed, and extracts keywords/entities from the filename and text.
+    """
+    from PIL import Image as PILImage
+
+    ocr_text = ""
+    ocr_blocks: list[dict[str, Any]] = []
+    width, height = 0, 0
+    try:
+        with PILImage.open(image_path) as img:
+            width, height = img.size
+            try:
+                import pytesseract
+
+                data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                n_boxes = len(data.get("text", []))
+                for i in range(n_boxes):
+                    t = str(data["text"][i]).strip()
+                    if not t:
+                        continue
+                    x, y, w, h = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
+                    if width > 0 and height > 0:
+                        ocr_blocks.append({
+                            "text": t,
+                            "box": {
+                                "x": round(x / width, 4),
+                                "y": round(y / height, 4),
+                                "width": round(w / width, 4),
+                                "height": round(h / height, 4),
+                            },
+                        })
+                ocr_text = pytesseract.image_to_string(img).strip()
+            except Exception:
+                pass
+    except Exception as exc:
+        raise ImageProcessingError(f"Local image processing failed for {image_path.name}: {exc}") from exc
+
+    stem_lower = image_path.stem.lower()
+    if any(k in stem_lower for k in ("chart", "graph", "metric", "plot")):
+        image_type = "chart"
+    elif any(k in stem_lower for k in ("diagram", "arch", "flow", "schema")):
+        image_type = "diagram"
+    elif any(k in stem_lower for k in ("slide", "deck", "presentation")):
+        image_type = "slide"
+    elif any(k in stem_lower for k in ("screen", "ui", "shot", "page")):
+        image_type = "screenshot"
+    else:
+        image_type = "other"
+
+    clean_stem = image_path.stem.replace("-", " ").replace("_", " ")
+    if ocr_text:
+        visual_summary = f"{image_type.capitalize()} '{clean_stem}' ({width}x{height}) showing text: {ocr_text[:160]}"
+    else:
+        visual_summary = f"{image_type.capitalize()} '{clean_stem}' ({width}x{height})"
+
+    words = [w for w in clean_stem.split() if len(w) > 2]
+    entities = list(dict.fromkeys(words))
+    entity_types = {e: "concept" for e in entities}
+
+    return {
+        "image_type": image_type,
+        "visual_summary": visual_summary,
+        "ocr_text": ocr_text or clean_stem,
+        "ocr_blocks": ocr_blocks,
+        "regions": [],
+        "entities": entities,
+        "entity_types": entity_types,
+        "local_fallback": True,
+    }
+
+
 def analyze_image(image_path: Path, *, client: Any | None = None) -> dict[str, Any]:
     """Describe an image: summary, OCR text and blocks, regions, typed entities."""
     if not image_path.is_file():
@@ -127,6 +201,8 @@ def analyze_image(image_path: Path, *, client: Any | None = None) -> dict[str, A
     try:
         part = llm.Image(data=image_path.read_bytes(), mime_type=media_type)
         raw = llm.generate_json([_PROMPT, part], client=client)
+    except llm.LLMNotConfigured:
+        return local_fallback_analysis(image_path)
     except llm.LLMError as exc:
         raise ImageProcessingError(f"Vision analysis failed for {image_path.name}: {exc}") from exc
     except ImportError as exc:
@@ -149,12 +225,14 @@ def process_image(file_path: str, *, client: Any | None = None) -> KnowledgeNode
     """Create one image knowledge node from a local PNG or JPEG upload."""
     image_path = Path(file_path)
     analysis = analyze_image(image_path, client=client)
+    confidence = 0.65 if analysis.get("local_fallback") else 0.85
     return KnowledgeNode(
         content=analysis["ocr_text"],
         transcript=analysis["ocr_text"],
         visual_summary=analysis["visual_summary"] or None,
         modality=MediaModality.IMAGE,
         source=image_path.name,
+        confidence=confidence,
         frame_path=_servable_upload_path(image_path),
         entities=analysis["entities"],
         entity_types=analysis["entity_types"],
@@ -163,5 +241,6 @@ def process_image(file_path: str, *, client: Any | None = None) -> KnowledgeNode
             "image_type": analysis["image_type"],
             "ocr_blocks": analysis["ocr_blocks"],
             "regions": analysis["regions"],
+            "local_fallback": analysis.get("local_fallback", False),
         },
     )

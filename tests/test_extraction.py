@@ -162,3 +162,21 @@ def test_whisper_confidence():
     assert segment_confidence(-0.2, 0.1) == pytest.approx(0.7369, abs=1e-4)
     assert segment_confidence(None, 0.1) is None
     assert segment_confidence(-0.1, None) == pytest.approx(0.9048, abs=1e-4)
+
+
+def test_image_local_fallback(tmp_path):
+    from PIL import Image
+    from app.services.image_processor import process_image
+
+    img_path = tmp_path / "architecture-diagram.png"
+    img = Image.new("RGB", (200, 100), color=(73, 109, 137))
+    img.save(img_path)
+
+    node = process_image(str(img_path))
+    assert node.modality == MediaModality.IMAGE
+    assert node.source == "architecture-diagram.png"
+    assert node.confidence == 0.65
+    assert node.attributes["local_fallback"] is True
+    assert node.attributes["image_type"] == "diagram"
+    assert "architecture" in node.entities
+

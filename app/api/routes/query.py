@@ -13,6 +13,9 @@ from fastapi.responses import StreamingResponse
 
 from app.schemas.knowledge import (
     AnswerSource,
+    ChatMessageRequest,
+    ChatSessionResponse,
+    ChatTurnResponse,
     DossierExportRequest,
     KnowledgeQueryRequest,
     KnowledgeComparisonResponse,
@@ -22,6 +25,7 @@ from app.schemas.knowledge import (
 )
 from app.services import retrieval
 from app.services.answer_synthesizer import SynthesizedAnswer, stream_answer, synthesize_answer
+from app.services.chat_session import get_chat_manager
 from app.services.dossier import generate_html_dossier, generate_markdown_dossier
 from app.services.vector_store import VectorStoreError
 
@@ -290,3 +294,85 @@ async def export_dossier(request: DossierExportRequest) -> Response:
         method=synthesized.method,
     )
     return Response(content=content, media_type="text/markdown")
+
+
+@router.post("/query/chat", response_model=ChatSessionResponse)
+async def chat_turn(request: ChatMessageRequest) -> ChatSessionResponse:
+    """Multi-turn conversational question answering with query reformulation."""
+    manager = get_chat_manager()
+    session = manager.get_or_create(request.session_id)
+
+    reformulated = manager.reformulate_query(session, request.query)
+    result = await _retrieve(KnowledgeQueryRequest(query=reformulated, limit=request.limit))
+    synthesized = await to_thread.run_sync(
+        lambda: synthesize_answer(reformulated, result.hits, subqueries=result.subqueries)
+    )
+
+    manager.add_turn(
+        session_id=session.session_id,
+        query=request.query,
+        reformulated_query=reformulated,
+        answer=synthesized.answer,
+        grounded=synthesized.grounded,
+        sources=synthesized.sources,
+    )
+
+    turns = [
+        ChatTurnResponse(
+            turn_id=t.turn_id,
+            query=t.query,
+            reformulated_query=t.reformulated_query,
+            answer=t.answer,
+            grounded=t.grounded,
+            sources=[AnswerSource(**s) for s in t.sources],
+            created_at=t.created_at,
+        )
+        for t in session.turns
+    ]
+    return ChatSessionResponse(
+        session_id=session.session_id,
+        created_at=session.created_at,
+        turns=turns,
+        latest_answer=_answer_model(synthesized),
+    )
+
+
+@router.get("/query/chat/sessions")
+async def list_chat_sessions() -> list[dict[str, Any]]:
+    """List active conversational chat sessions."""
+    return get_chat_manager().list_sessions()
+
+
+@router.get("/query/chat/{session_id}", response_model=ChatSessionResponse)
+async def get_chat_session(session_id: str) -> ChatSessionResponse:
+    """Retrieve an existing conversational session."""
+    session = get_chat_manager().get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    turns = [
+        ChatTurnResponse(
+            turn_id=t.turn_id,
+            query=t.query,
+            reformulated_query=t.reformulated_query,
+            answer=t.answer,
+            grounded=t.grounded,
+            sources=[AnswerSource(**s) for s in t.sources],
+            created_at=t.created_at,
+        )
+        for t in session.turns
+    ]
+    return ChatSessionResponse(
+        session_id=session.session_id,
+        created_at=session.created_at,
+        turns=turns,
+        latest_answer=None,
+    )
+
+
+@router.delete("/query/chat/{session_id}")
+async def delete_chat_session(session_id: str) -> dict[str, bool]:
+    """Delete a conversation session."""
+    deleted = get_chat_manager().delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"deleted": True}

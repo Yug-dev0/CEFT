@@ -328,3 +328,38 @@ class DossierExportRequest(BaseModel):
     limit: int = Field(default=5, ge=1, le=20)
     format: Literal["markdown", "html"] = "markdown"
 
+
+class ChatMessageRequest(BaseModel):
+    """Multi-turn conversation query request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str | None = None
+    query: str = Field(min_length=1, max_length=2000)
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class ChatTurnResponse(BaseModel):
+    """A single turn in a conversational session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: str
+    query: str
+    reformulated_query: str
+    answer: str
+    grounded: bool
+    sources: list[AnswerSource] = Field(default_factory=list)
+    created_at: str
+
+
+class ChatSessionResponse(BaseModel):
+    """Complete conversational session state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    created_at: str
+    turns: list[ChatTurnResponse] = Field(default_factory=list)
+    latest_answer: SynthesizedAnswerModel | None = None
+

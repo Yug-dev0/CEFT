@@ -15,7 +15,7 @@
 [![SQLite FTS5](https://img.shields.io/badge/SQLite-FTS5-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-1.x-5A3FC0?style=flat-square)](https://www.trychroma.com/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
-[![Tests](https://img.shields.io/badge/tests-119%20passed-10b981?style=flat-square&logo=pytest&logoColor=white)](tests)
+[![Tests](https://img.shields.io/badge/tests-137%20passed-10b981?style=flat-square&logo=pytest&logoColor=white)](tests)
 
 <p align="center">
   <a href="#why-ceft">Why Ceft</a> •
@@ -290,9 +290,23 @@ curl -N -X POST http://127.0.0.1:8000/query/stream \
 curl -X POST http://127.0.0.1:8000/query/compare \
      -H "Content-Type: application/json" \
      -d '{"query": "Show latency before and after the fix", "limit": 5}'
+
+# Export complete investigation dossier (Markdown or HTML)
+curl -X POST http://127.0.0.1:8000/query/dossier \
+     -H "Content-Type: application/json" \
+     -d '{"query": "How was checkout timeout resolved?", "format": "markdown"}'
+
+# Multi-turn conversation with query reformulation
+curl -X POST http://127.0.0.1:8000/query/chat \
+     -H "Content-Type: application/json" \
+     -d '{"query": "Who approved the backoff change?", "session_id": "incident-postmortem-1"}'
 ```
 
 ### 3. Knowledge Graph & Metadata Endpoints
+
+```bash
+# Retrieve unified chronological incident timeline across all sources
+curl "http://127.0.0.1:8000/knowledge/timeline?limit=50"
 
 ```bash
 # Retrieve knowledge repository statistics
@@ -326,6 +340,32 @@ python -m app.cli reindex
 
 # Recompute cross-modal entity and semantic links
 python -m app.cli relink
+
+# Run Model Context Protocol (MCP) stdio server for Claude Desktop / Cursor
+python -m app.cli mcp
+```
+
+### Model Context Protocol (MCP) Server
+
+Ceft includes a native MCP server exposing multimodal RAG tools over JSON-RPC 2.0 stdio transport:
+- `ceft_search`: Hybrid dense + keyword + entity retrieval with exact locators and timestamps.
+- `ceft_ask`: Synthesized answers with byte-exact citations.
+- `ceft_get_evidence`: Inspect specific evidence segment with bounding boxes and relations.
+- `ceft_get_entity`: Entity lookup with aliases and cross-modal timeline.
+- `ceft_list_sources`: List all indexed files and modalities.
+- `ceft_get_timeline`: Chronological event sequence across all sources.
+
+Add to `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "ceft": {
+      "command": "python3",
+      "args": ["-m", "app.mcp"],
+      "cwd": "/path/to/ceft"
+    }
+  }
+}
 ```
 
 ---

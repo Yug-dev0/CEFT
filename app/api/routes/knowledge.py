@@ -223,6 +223,25 @@ async def get_graph(
     return view
 
 
+@router.get("/knowledge/timeline", tags=["knowledge"])
+async def get_timeline(
+    limit: int = Query(default=100, ge=1, le=500),
+    source_id: str | None = Query(default=None),
+    modality: str | None = Query(default=None),
+) -> list[dict[str, object]]:
+    """Chronological event timeline spanning videos, audios, PDFs, and JSON records."""
+    from app.services.timeline import get_timeline_events
+
+    return await to_thread.run_sync(
+        lambda: get_timeline_events(
+            repository=get_repository(),
+            limit=limit,
+            source_id=source_id,
+            modality=modality,
+        )
+    )
+
+
 @router.post("/graph/relink", tags=["knowledge"])
 async def relink_graph() -> dict[str, int]:
     """Recompute every cross-modal and temporal link (e.g. after tuning thresholds)."""

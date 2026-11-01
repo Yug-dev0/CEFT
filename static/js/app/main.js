@@ -7,6 +7,7 @@ import { renderAsk } from "./views/ask.js";
 import { renderLibrary } from "./views/library.js";
 import { renderSource } from "./views/source.js";
 import { renderEntities, renderEntity } from "./views/entities.js";
+import { renderTimeline } from "./views/timeline.js";
 import { renderEvaluate } from "./views/evaluate.js";
 import { renderGraph } from "./views/graph.js";
 import { startTour } from "./tour.js";
@@ -30,6 +31,7 @@ const ROUTES = [
   [/^\/sources\/([^/]+)$/, "library", renderSource, "Source"],
   [/^\/entities$/, "entities", renderEntities, "Entities"],
   [/^\/entities\/([^/]+)$/, "entities", renderEntity, "Entity"],
+  [/^\/timeline$/, "timeline", renderTimeline, "Timeline"],
   [/^\/graph$/, "graph", renderGraph, "Graph"],
   [/^\/graph\/([^/]+)$/, "graph", renderGraph, "Graph"],
   [/^\/evaluate$/, "evaluate", renderEvaluate, "Evaluation"],

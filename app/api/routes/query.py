@@ -8,11 +8,12 @@ from typing import Any
 from collections.abc import Iterator
 
 from anyio import to_thread
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.schemas.knowledge import (
     AnswerSource,
+    DossierExportRequest,
     KnowledgeQueryRequest,
     KnowledgeComparisonResponse,
     KnowledgeQueryResponse,
@@ -21,6 +22,7 @@ from app.schemas.knowledge import (
 )
 from app.services import retrieval
 from app.services.answer_synthesizer import SynthesizedAnswer, stream_answer, synthesize_answer
+from app.services.dossier import generate_html_dossier, generate_markdown_dossier
 from app.services.vector_store import VectorStoreError
 
 _log = logging.getLogger(__name__)
@@ -258,3 +260,33 @@ async def compare_query(request: KnowledgeQueryRequest) -> KnowledgeComparisonRe
         multimodal_result=_to_query_result(multimodal_hits[0]) if multimodal_hits else None,
         text_only_baseline_result=_to_query_result(baseline_hits[0]) if baseline_hits else None,
     )
+
+
+@router.post("/query/dossier")
+async def export_dossier(request: DossierExportRequest) -> Response:
+    """Generate a comprehensive investigation dossier in Markdown or standalone HTML."""
+    result = await _retrieve(KnowledgeQueryRequest(query=request.query, limit=request.limit))
+    synthesized = await to_thread.run_sync(
+        lambda: synthesize_answer(request.query, result.hits, subqueries=result.subqueries)
+    )
+
+    if request.format == "html":
+        content = generate_html_dossier(
+            query=request.query,
+            answer_text=synthesized.answer,
+            sources=synthesized.sources,
+            hits=result.hits,
+            grounded=synthesized.grounded,
+            method=synthesized.method,
+        )
+        return Response(content=content, media_type="text/html")
+
+    content = generate_markdown_dossier(
+        query=request.query,
+        answer_text=synthesized.answer,
+        sources=synthesized.sources,
+        hits=result.hits,
+        grounded=synthesized.grounded,
+        method=synthesized.method,
+    )
+    return Response(content=content, media_type="text/markdown")

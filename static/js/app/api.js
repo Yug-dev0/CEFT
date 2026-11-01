@@ -75,6 +75,8 @@ export const api = {
   seedDemo: () => request("/demo/seed", { method: "POST" }),
   evalLatest: () => request("/eval/latest"),
   evalRun: ({ dataset = "demo", k = 5, systems } = {}) => request("/eval/run", { method: "POST", body: { dataset, k, ...(systems ? { systems } : {}) } }),
+  timeline: ({ limit = 100, source_id, modality } = {}) => request(`/knowledge/timeline?limit=${limit}${source_id ? `&source_id=${encodeURIComponent(source_id)}` : ""}${modality ? `&modality=${encodeURIComponent(modality)}` : ""}`),
+  dossier: (query, format = "markdown", limit = 5) => request("/query/dossier", { method: "POST", body: { query, format, limit } }),
 };
 
 /**

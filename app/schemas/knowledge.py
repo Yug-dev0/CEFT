@@ -317,3 +317,14 @@ class KnowledgeComparisonResponse(BaseModel):
     query: str
     multimodal_result: KnowledgeQueryResult | None = None
     text_only_baseline_result: KnowledgeQueryResult | None = None
+
+
+class DossierExportRequest(BaseModel):
+    """Request to generate an investigation dossier."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=2000)
+    limit: int = Field(default=5, ge=1, le=20)
+    format: Literal["markdown", "html"] = "markdown"
+

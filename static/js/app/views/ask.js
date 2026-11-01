@@ -308,12 +308,34 @@ export function renderAsk(root, params) {
         const copy = async (text, done) => {
           try { await navigator.clipboard.writeText(text); toast(done, "ok"); } catch { toast("Copy isn't available in this browser.", "err"); }
         };
+        const exportDossier = async (fmt = "markdown") => {
+          try {
+            toast(`Generating ${fmt.toUpperCase()} dossier…`, "ok");
+            const res = await fetch("/query/dossier", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ query, format: fmt, limit: 8 }),
+            });
+            if (!res.ok) throw new Error("Dossier generation failed");
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `ceft-dossier-${Date.now()}.${fmt === "html" ? "html" : "md"}`;
+            a.click();
+            URL.revokeObjectURL(url);
+            toast("Dossier exported.", "ok");
+          } catch (e) {
+            toast(e.message, "err");
+          }
+        };
         answerHost.removeAttribute("aria-busy");
         fill(answerHost,
           h("div", { class: "answer-top" },
             meta(h("span", { class: `badge ${answer.grounded ? "ok" : "warn"}` }, icon(answer.grounded ? "check" : "alert", 13), answer.grounded ? "Grounded" : "Not supported by evidence"),
               `${method}${citedHits.length ? ` · ${citedHits.length} source${citedHits.length === 1 ? "" : "s"}, ${formats} format${formats === 1 ? "" : "s"}` : ""}`),
             h("div", { class: "answer-actions" },
+              h("button", { class: "btn btn-ghost btn-sm", type: "button", title: "Export investigation dossier as Markdown", onclick: () => exportDossier("markdown") }, icon("download", 14), "Dossier"),
               h("button", { class: "btn btn-ghost btn-sm", type: "button", title: "Copy the answer with its sources", onclick: () => copy(copyText(), "Answer copied.") }, icon("copy", 14), "Copy"),
               h("button", { class: "btn btn-ghost btn-sm", type: "button", title: "Ask again", onclick: () => run(query) }, icon("refresh", 14), "Regenerate"),
               h("button", { class: "btn btn-ghost btn-sm", type: "button", title: "Copy a link to this question", onclick: () => copy(location.href, "Link copied.") }, icon("link", 14), "Link"),

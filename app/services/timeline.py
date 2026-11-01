@@ -110,13 +110,14 @@ def get_timeline_events(
 
     # Hydrate entities efficiently
     if events:
-        seg_ids = [e["id"] for e in events]
-        mentions = repo.mentions_of()
+        seg_ids = set(e["id"] for e in events)
         ent_map = {e.id: e.name for e in repo.all_entities()}
         seg_entities: dict[str, list[str]] = {}
-        for sid, eid in mentions:
-            if sid in set(seg_ids) and eid in ent_map:
-                seg_entities.setdefault(sid, []).append(ent_map[eid])
+        if ent_map:
+            mentions = repo.mentions_of(list(ent_map.keys()))
+            for sid, eid in mentions:
+                if sid in seg_ids and eid in ent_map:
+                    seg_entities.setdefault(sid, []).append(ent_map[eid])
         for e in events:
             e["entities"] = seg_entities.get(e["id"], [])
 

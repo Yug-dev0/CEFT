@@ -15,7 +15,7 @@
 [![SQLite FTS5](https://img.shields.io/badge/SQLite-FTS5-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-1.x-5A3FC0?style=flat-square)](https://www.trychroma.com/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
-[![Tests](https://img.shields.io/badge/tests-137%20passed-10b981?style=flat-square&logo=pytest&logoColor=white)](tests)
+[![Tests](https://img.shields.io/badge/tests-169%20passed-10b981?style=flat-square&logo=pytest&logoColor=white)](tests)
 
 <p align="center">
   <a href="#why-ceft">Why Ceft</a> •
@@ -296,19 +296,42 @@ curl -X POST http://127.0.0.1:8000/query/dossier \
      -H "Content-Type: application/json" \
      -d '{"query": "How was checkout timeout resolved?", "format": "markdown"}'
 
+# Verify factual claims and citation alignment (hallucination guard)
+curl -X POST http://127.0.0.1:8000/query/verify \
+     -H "Content-Type: application/json" \
+     -d '{"answer": "Exponential backoff resolved the 504 errors [1].", "sources": [{"citation": 1, "source": "postmortem.pdf", "snippet": "Exponential backoff resolved the 504 errors."}]}'
+
+# Classify multimodal query intent and target modalities
+curl -X POST http://127.0.0.1:8000/query/intent \
+     -H "Content-Type: application/json" \
+     -d '{"query": "Show me the Grafana dashboard diagram and what Alex said"}'
+
 # Multi-turn conversation with query reformulation
 curl -X POST http://127.0.0.1:8000/query/chat \
      -H "Content-Type: application/json" \
      -d '{"query": "Who approved the backoff change?", "session_id": "incident-postmortem-1"}'
 ```
 
-### 3. Knowledge Graph & Metadata Endpoints
+### 3. Knowledge Graph, Analytics & Maintenance Endpoints
 
 ```bash
+# Retrieve graph topology analytics, PageRank centrality & cross-modal bridges
+curl http://127.0.0.1:8000/graph/analytics
+
+# Retrieve automated semantic chapters and milestones for video/audio
+curl http://127.0.0.1:8000/sources/src_meeting_video/chapters
+
+# Export complete knowledge base snapshot archive
+curl http://127.0.0.1:8000/knowledge/export > snapshot.json
+
+# Import knowledge base snapshot archive
+curl -X POST http://127.0.0.1:8000/knowledge/import \
+     -H "Content-Type: application/json" \
+     -d @snapshot.json
+
 # Retrieve unified chronological incident timeline across all sources
 curl "http://127.0.0.1:8000/knowledge/timeline?limit=50"
 
-```bash
 # Retrieve knowledge repository statistics
 curl http://127.0.0.1:8000/stats
 
@@ -320,6 +343,11 @@ curl "http://127.0.0.1:8000/entities/ent_checkout_service/timeline"
 
 # Inspect background ingestion job status
 curl "http://127.0.0.1:8000/jobs?status=completed"
+
+# Test webhook event dispatch
+curl -X POST http://127.0.0.1:8000/jobs/webhook/test \
+     -H "Content-Type: application/json" \
+     -d '{"url": "https://example.com/webhook", "secret": "webhook-secret"}'
 ```
 
 ---
@@ -341,6 +369,12 @@ python -m app.cli reindex
 # Recompute cross-modal entity and semantic links
 python -m app.cli relink
 
+# Export entire knowledge base to a portable JSON snapshot
+python -m app.cli export-kb --out incident_snapshot.json
+
+# Import a knowledge base snapshot with automatic vector indexing
+python -m app.cli import-kb --file incident_snapshot.json
+
 # Run Model Context Protocol (MCP) stdio server for Claude Desktop / Cursor
 python -m app.cli mcp
 ```
@@ -348,8 +382,11 @@ python -m app.cli mcp
 ### Model Context Protocol (MCP) Server
 
 Ceft includes a native MCP server exposing multimodal RAG tools over JSON-RPC 2.0 stdio transport:
-- `ceft_search`: Hybrid dense + keyword + entity retrieval with exact locators and timestamps.
+- `ceft_search`: Hybrid dense + keyword + entity retrieval with exact locators and optional cross-modal re-ranking (`rerank=true`).
 - `ceft_ask`: Synthesized answers with byte-exact citations.
+- `ceft_verify_claim`: Verify factual claims and citation faithfulness against evidence sources.
+- `ceft_graph_analytics`: Retrieve graph topology, PageRank centrality scores, and cross-modal bridge nodes.
+- `ceft_get_chapters`: Retrieve automated semantic chapters and milestones for video and audio assets.
 - `ceft_get_evidence`: Inspect specific evidence segment with bounding boxes and relations.
 - `ceft_get_entity`: Entity lookup with aliases and cross-modal timeline.
 - `ceft_list_sources`: List all indexed files and modalities.
@@ -383,6 +420,10 @@ Settings are configured via environment variables or a `.env` file:
 | `GEMINI_MODEL` | `gemini-3.6-flash` | Specific Gemini model variant to use. |
 | `GROQ_API_KEY` | *(None)* | Groq API key for ultra-fast Whisper audio transcription. Uses local faster-whisper when unset. |
 | `CEFT_API_KEY` | *(None)* | Optional authentication secret required for write operations (`POST`, `DELETE`). |
+| `CEFT_READONLY_API_KEY` | *(None)* | Optional secret permitting `/query` search while blocking data mutation. |
+| `RATE_LIMIT_PER_MINUTE` | `0` (disabled) | Sliding-window request rate limit per client IP per minute. |
+| `CEFT_WEBHOOK_URL` | *(None)* | Target URL for asynchronous job completion and failure webhook notifications. |
+| `CEFT_WEBHOOK_SECRET` | *(None)* | Shared secret for signing outbound webhook payloads with HMAC-SHA256 (`X-CEFT-Signature`). |
 | `CORS_ORIGINS` | `""` | Comma-separated list of allowed origins. Empty allows same-origin only. |
 | `MEDIA_STORAGE_ROOT` | `./data` | Directory for uploaded media files and extracted artifacts. |
 | `KNOWLEDGE_DB_PATH` | `./data/knowledge.db` | Location of SQLite knowledge base database. |

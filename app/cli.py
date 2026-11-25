@@ -129,6 +129,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("reindex", help="Drop and rebuild the vector index from SQLite.")
     sub.add_parser("relink", help="Recompute every cross-modal and temporal link.")
     sub.add_parser("mcp", help="Run the Model Context Protocol (MCP) stdio server.")
+    export_cmd = sub.add_parser("export-kb", help="Export complete knowledge base to a JSON file.")
+    export_cmd.add_argument("--out", "-o", default="knowledge_snapshot.json", help="Output JSON path")
+    import_cmd = sub.add_parser("import-kb", help="Import a knowledge base snapshot JSON file.")
+    import_cmd.add_argument("--file", "-f", required=True, help="Input snapshot JSON path")
     legacy = sub.add_parser("import-legacy", help="Import the pre-SQLite Chroma collection.")
     legacy.add_argument("--collection", default=LEGACY_COLLECTION)
     args = parser.parse_args(argv)
@@ -146,6 +150,23 @@ def main(argv: list[str] | None = None) -> int:
         from app.mcp import run_stdio_server
 
         run_stdio_server()
+    elif args.command == "export-kb":
+        from app.services.snapshot import export_knowledge_snapshot
+
+        data = export_knowledge_snapshot(get_repository())
+        out_path = Path(args.out)
+        out_path.write_text(json.dumps(data, indent=2))
+        print(f"Exported knowledge snapshot to {out_path} ({data['stats']}).")
+    elif args.command == "import-kb":
+        from app.services.snapshot import import_knowledge_snapshot
+
+        in_path = Path(args.file)
+        if not in_path.exists():
+            print(f"Error: File {in_path} does not exist.", file=sys.stderr)
+            return 1
+        data = json.loads(in_path.read_text())
+        res = import_knowledge_snapshot(data, get_repository())
+        print(f"Imported snapshot from {in_path}: {res}.")
     elif args.command == "import-legacy":
         counts = import_legacy(args.collection)
         print(f"Imported {counts['sources']} sources / {counts['segments']} segments.")

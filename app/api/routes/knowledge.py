@@ -271,6 +271,25 @@ async def relink_graph() -> dict[str, int]:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
+@router.get("/knowledge/export", tags=["knowledge"])
+async def export_snapshot() -> dict[str, object]:
+    """Export complete knowledge base into a portable JSON snapshot."""
+    from app.services.snapshot import export_knowledge_snapshot
+
+    return await to_thread.run_sync(lambda: export_knowledge_snapshot(get_repository()))
+
+
+@router.post("/knowledge/import", tags=["knowledge"])
+async def import_snapshot(payload: dict[str, object]) -> dict[str, int]:
+    """Import a knowledge base snapshot and update vector store."""
+    from app.services.snapshot import import_knowledge_snapshot
+
+    try:
+        return await to_thread.run_sync(lambda: import_knowledge_snapshot(payload, get_repository()))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to import snapshot: {exc}") from exc
+
+
 @router.post("/demo/seed", tags=["system"])
 async def seed_demo_data() -> dict[str, int]:
     """Load the bundled cross-modal demo scenario (idempotent; no API keys needed)."""

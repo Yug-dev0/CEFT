@@ -68,6 +68,11 @@ TOOLS: list[dict[str, Any]] = [
                     "default": True,
                     "description": "Whether to expand along the knowledge graph to pull in corroborating evidence.",
                 },
+                "rerank": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Whether to apply cross-modal relevance re-ranking with lexical, entity, and provenance scoring.",
+                },
             },
             "required": ["query"],
         },
@@ -156,6 +161,53 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "ceft_verify_claim",
+        "description": (
+            "Verify factual claims and citation alignment in an answer against evidence sources."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "type": "string",
+                    "description": "Synthesized answer text containing numbered citations [1], [2].",
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "List of evidence sources against which to audit citations.",
+                },
+            },
+            "required": ["answer"],
+        },
+    },
+    {
+        "name": "ceft_graph_analytics",
+        "description": (
+            "Retrieve knowledge graph topology metrics, PageRank centrality scores, and cross-modal bridge entities."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "ceft_get_chapters",
+        "description": (
+            "Retrieve automated semantic chapters and milestones for an incident video or audio recording."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source_id": {
+                    "type": "string",
+                    "description": "The unique source ID of the video or audio asset.",
+                },
+            },
+            "required": ["source_id"],
+        },
+    },
 ]
 
 
@@ -167,12 +219,14 @@ def _handle_ceft_search(args: dict[str, Any]) -> str:
     modalities = args.get("modalities")
     hybrid = bool(args.get("hybrid", True))
     expand = bool(args.get("expand", True))
+    rerank = bool(args.get("rerank", False))
 
     res = retrieval.retrieve(
         query=query,
         limit=limit,
         hybrid=hybrid,
         expand=expand,
+        rerank=rerank,
         modalities=modalities,
     )
     formatted = []
@@ -184,6 +238,7 @@ def _handle_ceft_search(args: dict[str, Any]) -> str:
             "modality": (h.get("metadata") or {}).get("modality"),
             "locator": h.get("timestamp"),
             "score": h.get("score"),
+            "rerank_score": h.get("rerank_score"),
             "transcript": h.get("transcript"),
             "visual_summary": h.get("visual_summary"),
             "entities": h.get("entities", []),
@@ -330,6 +385,36 @@ def _handle_ceft_get_timeline(args: dict[str, Any]) -> str:
     return json.dumps(events[:limit], indent=2)
 
 
+def _handle_ceft_verify_claim(args: dict[str, Any]) -> str:
+    from app.services.verifier import verify_answer
+
+    answer = str(args.get("answer", "")).strip()
+    sources = args.get("sources") or []
+    res = verify_answer(answer, sources)
+    return res.model_dump_json(indent=2)
+
+
+def _handle_ceft_graph_analytics(_args: dict[str, Any]) -> str:
+    from app.services.graph import compute_graph_analytics
+
+    repo = get_repository()
+    res = compute_graph_analytics(repo)
+    return res.model_dump_json(indent=2)
+
+
+def _handle_ceft_get_chapters(args: dict[str, Any]) -> str:
+    from app.services.chapters import generate_source_chapters
+
+    source_id = str(args.get("source_id", "")).strip()
+    if not source_id:
+        return json.dumps({"error": "source_id cannot be empty"})
+    repo = get_repository()
+    res = generate_source_chapters(repo, source_id)
+    if res is None:
+        return json.dumps({"error": f"Source {source_id} not found"})
+    return res.model_dump_json(indent=2)
+
+
 TOOL_HANDLERS = {
     "ceft_search": _handle_ceft_search,
     "ceft_ask": _handle_ceft_ask,
@@ -337,6 +422,9 @@ TOOL_HANDLERS = {
     "ceft_get_entity": _handle_ceft_get_entity,
     "ceft_list_sources": _handle_ceft_list_sources,
     "ceft_get_timeline": _handle_ceft_get_timeline,
+    "ceft_verify_claim": _handle_ceft_verify_claim,
+    "ceft_graph_analytics": _handle_ceft_graph_analytics,
+    "ceft_get_chapters": _handle_ceft_get_chapters,
 }
 
 

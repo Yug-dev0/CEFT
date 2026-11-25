@@ -46,6 +46,9 @@ def test_mcp_tools_list():
     assert "ceft_get_entity" in tool_names
     assert "ceft_list_sources" in tool_names
     assert "ceft_get_timeline" in tool_names
+    assert "ceft_verify_claim" in tool_names
+    assert "ceft_graph_analytics" in tool_names
+    assert "ceft_get_chapters" in tool_names
 
 
 def test_mcp_unknown_tool():
@@ -155,3 +158,54 @@ def test_mcp_tool_get_timeline():
     text = resp["result"]["content"][0]["text"]
     data = json.loads(text)
     assert isinstance(data, list)
+
+
+def test_mcp_tool_verify_claim():
+    req = {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "tools/call",
+        "params": {
+            "name": "ceft_verify_claim",
+            "arguments": {
+                "answer": "Fixed via backoff [1].",
+                "sources": [{"citation": 1, "source": "meeting.mp4", "snippet": "Fixed via backoff."}],
+            },
+        },
+    }
+    resp = handle_request(req)
+    assert resp["id"] == 10
+    text = resp["result"]["content"][0]["text"]
+    data = json.loads(text)
+    assert data["is_verified"] is True
+    assert data["faithfulness_score"] >= 0.6
+
+
+def test_mcp_tool_graph_analytics():
+    req = {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "tools/call",
+        "params": {"name": "ceft_graph_analytics", "arguments": {}},
+    }
+    resp = handle_request(req)
+    assert resp["id"] == 11
+    text = resp["result"]["content"][0]["text"]
+    data = json.loads(text)
+    assert "total_nodes" in data
+    assert "density" in data
+
+
+def test_mcp_tool_get_chapters():
+    req = {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "tools/call",
+        "params": {"name": "ceft_get_chapters", "arguments": {"source_id": "non_existent_source"}},
+    }
+    resp = handle_request(req)
+    assert resp["id"] == 12
+    text = resp["result"]["content"][0]["text"]
+    data = json.loads(text)
+    assert "error" in data
+

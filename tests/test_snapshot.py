@@ -1,7 +1,7 @@
 """Tests for knowledge base snapshot export and import archive engine."""
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from app.schemas.knowledge import MediaModality
 from app.schemas.records import Locator, SegmentKind, SegmentRecord, SourceRecord

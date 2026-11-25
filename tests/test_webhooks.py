@@ -3,13 +3,13 @@
 import hashlib
 import hmac
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from app.schemas.knowledge import MediaModality
-from app.schemas.records import JobRecord, JobStatus
+from app.schemas.records import JobRecord
 from app.services.webhooks import dispatch_job_event, sign_payload
 from main import app
 

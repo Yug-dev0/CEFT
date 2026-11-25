@@ -1,9 +1,8 @@
 """Tests for citation verification and hallucination detection."""
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
-from app.schemas.knowledge import AnswerSource
 from app.services.verifier import verify_answer
 from main import app
 

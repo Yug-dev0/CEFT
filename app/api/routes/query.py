@@ -154,6 +154,7 @@ async def _retrieve(request: KnowledgeQueryRequest) -> retrieval.RetrievalResult
                 hybrid=request.hybrid,
                 expand=request.expand,
                 decompose_query=request.decompose,
+                rerank=request.rerank,
                 modalities=[m.value for m in request.modalities] if request.modalities else None,
             )
         )

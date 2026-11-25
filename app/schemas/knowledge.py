@@ -191,6 +191,7 @@ class KnowledgeQueryRequest(BaseModel):
     hybrid: bool = Field(default=True, description="Fuse keyword (BM25) and entity matches with dense search.")
     expand: bool = Field(default=True, description="Pull in evidence linked to the top hits in the graph.")
     decompose: bool = Field(default=True, description="Split multi-part questions into sub-questions.")
+    rerank: bool = Field(default=False, description="Apply cross-modal relevance re-ranking to candidate hits.")
     modalities: list[MediaModality] | None = Field(default=None, description="Restrict results to these modalities.")
 
 

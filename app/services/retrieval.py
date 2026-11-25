@@ -274,6 +274,7 @@ def retrieve(
     decompose_query: bool = True,
     modalities: list[str] | None = None,
     min_dense_score: float | None = None,
+    rerank: bool = False,
     vector_store: VectorStore | None = None,
     repository: KnowledgeRepository | None = None,
 ) -> RetrievalResult:
@@ -425,6 +426,11 @@ def retrieve(
             for sid in picked
         },
     )
+    if rerank and hits:
+        from app.services.reranker import rerank_hits
+
+        hits = rerank_hits(query, hits, subqueries=subqueries if len(subqueries) > 1 else [])
+
     return RetrievalResult(
         query=query,
         subqueries=subqueries if len(subqueries) > 1 else [],
@@ -432,6 +438,7 @@ def retrieve(
         strategy={
             "hybrid": hybrid,
             "expanded": expand,
+            "reranked": rerank,
             "expanded_hits": sum(1 for h in hits if h.get("via")),
             "subqueries": len(subqueries) if len(subqueries) > 1 else 0,
             "subquery_coverage": coverage,

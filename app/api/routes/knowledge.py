@@ -16,6 +16,7 @@ from app.schemas.records import (
     EntityDetail,
     EntityMention,
     EntityTimeline,
+    GraphAnalytics,
     GraphView,
     EntitySummary,
     KnowledgeStats,
@@ -26,7 +27,7 @@ from app.schemas.records import (
     SourceRecord,
     SourceSummary,
 )
-from app.services.graph import entity_timeline, neighbourhood, overview, segment_label
+from app.services.graph import compute_graph_analytics, entity_timeline, neighbourhood, overview, segment_label
 from app.services.ingestion import delete_source
 from app.services.vector_store import VectorStoreError
 
@@ -205,6 +206,12 @@ async def get_graph_overview(
     return await to_thread.run_sync(
         lambda: overview(get_repository(), entities=entities, min_sources=min_sources, limit=limit)
     )
+
+
+@router.get("/graph/analytics", response_model=GraphAnalytics, tags=["knowledge"])
+async def get_graph_analytics() -> GraphAnalytics:
+    """Compute topology analytics, PageRank centrality, and cross-modal bridge entities."""
+    return await to_thread.run_sync(lambda: compute_graph_analytics(get_repository()))
 
 
 @router.get("/graph/{node_id}", response_model=GraphView, tags=["knowledge"])

@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 
 from app.db.repository import KnowledgeRepository
 from app.schemas.records import (
+    CrossModalBridge,
     EntityTimeline,
+    GraphAnalytics,
     GraphEdge,
     GraphNode,
     GraphView,
@@ -16,6 +18,7 @@ from app.schemas.records import (
     SegmentRecord,
     SourceRecord,
     TimelineEntry,
+    TopEntityMetric,
 )
 
 
@@ -206,3 +209,120 @@ def overview(
         if r.src_id in known and r.dst_id in known
     ]
     return GraphView(center=None, nodes=nodes, edges=edges)
+
+
+def compute_graph_analytics(repo: KnowledgeRepository) -> GraphAnalytics:
+    """Compute topology metrics, PageRank centrality, and cross-modal bridge nodes."""
+    all_segments = {seg.id: seg for batch in repo.iter_all_segments() for seg in batch}
+    all_relations = repo.list_relations(list(RelationType))
+    all_entities = {e.id: e for e in repo.all_entities()}
+
+    modality_distribution: dict[str, int] = defaultdict(int)
+    for seg in all_segments.values():
+        modality_distribution[seg.modality.value] += 1
+
+    # Build adjacency graph
+    neighbors: dict[str, set[str]] = defaultdict(set)
+    degree: dict[str, int] = defaultdict(int)
+
+    for r in all_relations:
+        neighbors[r.src_id].add(r.dst_id)
+        neighbors[r.dst_id].add(r.src_id)
+        degree[r.src_id] += 1
+        degree[r.dst_id] += 1
+
+    all_node_ids = set(all_segments.keys()) | set(all_entities.keys()) | set(degree.keys())
+    total_nodes = len(all_node_ids)
+    total_edges = len(all_relations)
+    density = (2.0 * total_edges) / (total_nodes * (total_nodes - 1)) if total_nodes > 1 else 0.0
+
+    # PageRank algorithm (power iteration)
+    pagerank: dict[str, float] = {}
+    if total_nodes > 0:
+        d = 0.85
+        pr = {nid: 1.0 / total_nodes for nid in all_node_ids}
+        for _ in range(20):
+            next_pr = {nid: (1.0 - d) / total_nodes for nid in all_node_ids}
+            for nid in all_node_ids:
+                outs = neighbors[nid]
+                if outs:
+                    contrib = d * pr[nid] / len(outs)
+                    for target in outs:
+                        next_pr[target] += contrib
+                else:
+                    contrib = d * pr[nid] / total_nodes
+                    for target in all_node_ids:
+                        next_pr[target] += contrib
+            pr = next_pr
+        pagerank = pr
+
+    # Top entities by PageRank
+    top_pr_entities: list[TopEntityMetric] = []
+    for eid, ent in all_entities.items():
+        score = pagerank.get(eid, 0.0)
+        top_pr_entities.append(
+            TopEntityMetric(
+                entity_id=eid,
+                name=ent.name,
+                entity_type=ent.entity_type,
+                score=round(score, 6),
+                degree=degree.get(eid, 0),
+            )
+        )
+    top_pr_entities.sort(key=lambda m: (m.score, m.degree), reverse=True)
+    top_pr_entities = top_pr_entities[:15]
+
+    # Top connected entities
+    top_connected: list[TopEntityMetric] = []
+    for eid, ent in all_entities.items():
+        deg = degree.get(eid, 0)
+        top_connected.append(
+            TopEntityMetric(
+                entity_id=eid,
+                name=ent.name,
+                entity_type=ent.entity_type,
+                score=float(deg),
+                degree=deg,
+            )
+        )
+    top_connected.sort(key=lambda m: m.degree, reverse=True)
+    top_connected = top_connected[:15]
+
+    # Cross-modal bridges
+    bridges: list[CrossModalBridge] = []
+    mentions = repo.list_relations([RelationType.MENTIONS])
+    entity_to_segments: dict[str, set[str]] = defaultdict(set)
+    for r in mentions:
+        entity_to_segments[r.dst_id].add(r.src_id)
+
+    for eid, seg_ids in entity_to_segments.items():
+        ent = all_entities.get(eid) or repo.get_entity(eid)
+        if ent is None:
+            continue
+        seg_objs = [all_segments[sid] for sid in seg_ids if sid in all_segments]
+        modalities = sorted({s.modality.value for s in seg_objs})
+        sources = {s.source_id for s in seg_objs}
+        if len(modalities) >= 2:
+            bridge_score = round(len(modalities) * 1.5 + len(sources) * 1.0 + degree.get(eid, 0) * 0.2, 2)
+            bridges.append(
+                CrossModalBridge(
+                    id=eid,
+                    name=ent.name,
+                    kind=NodeKind.ENTITY,
+                    modalities=modalities,
+                    source_count=len(sources),
+                    bridge_score=bridge_score,
+                )
+            )
+    bridges.sort(key=lambda b: b.bridge_score, reverse=True)
+
+    return GraphAnalytics(
+        total_nodes=total_nodes,
+        total_edges=total_edges,
+        density=round(density, 6),
+        modality_distribution=dict(modality_distribution),
+        top_entities_by_pagerank=top_pr_entities,
+        top_connected_entities=top_connected,
+        cross_modal_bridges=bridges[:20],
+    )
+

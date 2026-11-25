@@ -412,3 +412,37 @@ class GraphView(BaseModel):
     center: str | None = None
     nodes: list[GraphNode] = Field(default_factory=list)
     edges: list[GraphEdge] = Field(default_factory=list)
+
+
+class TopEntityMetric(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    name: str
+    entity_type: str | None = None
+    score: float
+    degree: int = 0
+
+
+class CrossModalBridge(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    kind: NodeKind
+    modalities: list[str] = Field(default_factory=list)
+    source_count: int = 0
+    bridge_score: float = 0.0
+
+
+class GraphAnalytics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total_nodes: int
+    total_edges: int
+    density: float
+    modality_distribution: dict[str, int] = Field(default_factory=dict)
+    top_entities_by_pagerank: list[TopEntityMetric] = Field(default_factory=list)
+    top_connected_entities: list[TopEntityMetric] = Field(default_factory=list)
+    cross_modal_bridges: list[CrossModalBridge] = Field(default_factory=list)
+

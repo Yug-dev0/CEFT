@@ -21,6 +21,7 @@ from app.schemas.knowledge import (
     KnowledgeComparisonResponse,
     KnowledgeQueryResponse,
     KnowledgeQueryResult,
+    QueryIntentResponse,
     SynthesizedAnswerModel,
     VerificationResult,
     VerifyClaimRequest,
@@ -29,6 +30,7 @@ from app.services import retrieval
 from app.services.answer_synthesizer import SynthesizedAnswer, stream_answer, synthesize_answer
 from app.services.chat_session import get_chat_manager
 from app.services.dossier import generate_html_dossier, generate_markdown_dossier
+from app.services.intent import classify_intent
 from app.services.verifier import verify_answer
 from app.services.vector_store import VectorStoreError
 
@@ -192,6 +194,12 @@ def _sse(event: str, data: Any) -> str:
 async def verify_claim(request: VerifyClaimRequest) -> VerificationResult:
     """Verify factual claims and citation alignment against retrieved evidence."""
     return await to_thread.run_sync(lambda: verify_answer(request.answer, request.sources))
+
+
+@router.post("/query/intent", response_model=QueryIntentResponse)
+async def analyze_query_intent(request: KnowledgeQueryRequest) -> QueryIntentResponse:
+    """Classify user query intent and determine optimal modalities, speakers, and entities."""
+    return await to_thread.run_sync(lambda: classify_intent(request.query))
 
 
 @router.post("/query", response_model=KnowledgeQueryResponse)

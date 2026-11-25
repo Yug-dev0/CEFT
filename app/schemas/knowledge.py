@@ -400,3 +400,18 @@ class ChatSessionResponse(BaseModel):
     turns: list[ChatTurnResponse] = Field(default_factory=list)
     latest_answer: SynthesizedAnswerModel | None = None
 
+
+class QueryIntentResponse(BaseModel):
+    """Classified multimodal search intent with modality and entity suggestions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str
+    primary_intent: str
+    suggested_modalities: list[str] = Field(default_factory=list)
+    detected_speakers: list[str] = Field(default_factory=list)
+    detected_entities: list[str] = Field(default_factory=list)
+    temporal_focus: bool = False
+    confidence: float = Field(ge=0.0, le=1.0)
+
+

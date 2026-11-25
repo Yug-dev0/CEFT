@@ -267,6 +267,41 @@ class AnswerSource(BaseModel):
     similarity_score: float | None = None
 
 
+class VerifiedClaim(BaseModel):
+    """Claim-level verification against cited evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sentence: str
+    citations: list[int] = Field(default_factory=list)
+    status: Literal["supported", "partially_supported", "unsupported", "uncited"]
+    support_score: float = Field(ge=0.0, le=1.0)
+    evidence_snippet: str | None = None
+
+
+class VerificationResult(BaseModel):
+    """Result of auditing answer citations and claim grounding."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_verified: bool
+    faithfulness_score: float = Field(ge=0.0, le=1.0)
+    citation_precision: float = Field(ge=0.0, le=1.0)
+    total_claims: int = Field(ge=0)
+    supported_claims: int = Field(ge=0)
+    claims: list[VerifiedClaim] = Field(default_factory=list)
+    hallucination_warnings: list[str] = Field(default_factory=list)
+
+
+class VerifyClaimRequest(BaseModel):
+    """Request to verify an answer's factual citations and claims."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str = Field(min_length=1, max_length=10000)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class SynthesizedAnswerModel(BaseModel):
     """A grounded, cross-modal answer synthesized from retrieval evidence."""
 
@@ -276,6 +311,7 @@ class SynthesizedAnswerModel(BaseModel):
     grounded: bool
     method: str
     sources: list[AnswerSource] = Field(default_factory=list)
+    verification: VerificationResult | None = None
 
 
 class KnowledgeQueryResponse(BaseModel):

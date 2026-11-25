@@ -22,11 +22,14 @@ from app.schemas.knowledge import (
     KnowledgeQueryResponse,
     KnowledgeQueryResult,
     SynthesizedAnswerModel,
+    VerificationResult,
+    VerifyClaimRequest,
 )
 from app.services import retrieval
 from app.services.answer_synthesizer import SynthesizedAnswer, stream_answer, synthesize_answer
 from app.services.chat_session import get_chat_manager
 from app.services.dossier import generate_html_dossier, generate_markdown_dossier
+from app.services.verifier import verify_answer
 from app.services.vector_store import VectorStoreError
 
 _log = logging.getLogger(__name__)
@@ -168,17 +171,27 @@ async def _retrieve(request: KnowledgeQueryRequest) -> retrieval.RetrievalResult
         ) from exc
 
 
-def _answer_model(synthesized: SynthesizedAnswer) -> SynthesizedAnswerModel:
+def _answer_model(
+    synthesized: SynthesizedAnswer, hits: list[dict[str, Any]] | None = None
+) -> SynthesizedAnswerModel:
+    verification = verify_answer(synthesized.answer, synthesized.sources, hits=hits)
     return SynthesizedAnswerModel(
         answer=synthesized.answer,
         grounded=synthesized.grounded,
         method=synthesized.method,
         sources=[AnswerSource(**s) for s in synthesized.sources],
+        verification=verification,
     )
 
 
 def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+@router.post("/query/verify", response_model=VerificationResult)
+async def verify_claim(request: VerifyClaimRequest) -> VerificationResult:
+    """Verify factual claims and citation alignment against retrieved evidence."""
+    return await to_thread.run_sync(lambda: verify_answer(request.answer, request.sources))
 
 
 @router.post("/query", response_model=KnowledgeQueryResponse)
@@ -201,7 +214,7 @@ async def query_knowledge(request: KnowledgeQueryRequest) -> KnowledgeQueryRespo
         subqueries=result.subqueries,
         strategy=result.strategy,
         results=[_to_query_result(hit) for hit in hits],
-        answer=_answer_model(synthesized),
+        answer=_answer_model(synthesized, hits=hits),
     )
 
 

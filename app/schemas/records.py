@@ -446,3 +446,31 @@ class GraphAnalytics(BaseModel):
     top_connected_entities: list[TopEntityMetric] = Field(default_factory=list)
     cross_modal_bridges: list[CrossModalBridge] = Field(default_factory=list)
 
+
+class SourceChapter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_index: int
+    title: str
+    start_seconds: float = 0.0
+    end_seconds: float = 0.0
+    start_time_str: str = "00:00"
+    end_time_str: str = "00:00"
+    duration_seconds: float = 0.0
+    summary: str
+    keyframe_path: str | None = None
+    entities: list[str] = Field(default_factory=list)
+    speakers: list[str] = Field(default_factory=list)
+    segment_ids: list[str] = Field(default_factory=list)
+
+
+class SourceChaptersResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str
+    filename: str
+    modality: str
+    total_chapters: int
+    chapters: list[SourceChapter] = Field(default_factory=list)
+
+

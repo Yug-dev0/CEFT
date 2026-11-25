@@ -23,10 +23,12 @@ from app.schemas.records import (
     LinkedNode,
     NodeKind,
     SegmentDetail,
+    SourceChaptersResponse,
     SourceDetail,
     SourceRecord,
     SourceSummary,
 )
+from app.services.chapters import generate_source_chapters
 from app.services.graph import compute_graph_analytics, entity_timeline, neighbourhood, overview, segment_label
 from app.services.ingestion import delete_source
 from app.services.vector_store import VectorStoreError
@@ -74,6 +76,15 @@ async def get_source(source_id: str) -> SourceDetail:
     if detail is None:
         raise _not_found("Source", source_id)
     return detail
+
+
+@router.get("/sources/{source_id}/chapters", response_model=SourceChaptersResponse)
+async def get_source_chapters(source_id: str) -> SourceChaptersResponse:
+    """Get automated semantic incident chapters and milestone moments for a source."""
+    result = await to_thread.run_sync(lambda: generate_source_chapters(get_repository(), source_id))
+    if result is None:
+        raise _not_found("Source", source_id)
+    return result
 
 
 @router.delete("/sources/{source_id}", status_code=status.HTTP_200_OK)

@@ -70,6 +70,8 @@ class Settings:
 
     # Security and operations
     api_key: str | None
+    readonly_api_key: str | None
+    rate_limit_per_minute: int
     cors_origins: tuple[str, ...]
     log_level: str
 
@@ -123,6 +125,8 @@ def get_settings() -> Settings:
         max_upload_mb=max(1, _int("MAX_UPLOAD_MB", 500)),
         demo_enabled=_flag("ENABLE_DEMO", True),
         api_key=(os.getenv("CEFT_API_KEY") or os.getenv("WEFT_API_KEY") or "").strip() or None,
+        readonly_api_key=(os.getenv("CEFT_READONLY_API_KEY") or "").strip() or None,
+        rate_limit_per_minute=_int("RATE_LIMIT_PER_MINUTE", 0),
         cors_origins=tuple(o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()),
         log_level=(os.getenv("LOG_LEVEL") or "INFO").upper(),
     )

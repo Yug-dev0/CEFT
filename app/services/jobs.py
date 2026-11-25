@@ -95,27 +95,36 @@ class JobManager:
             )
         except (ProcessingFailed, VectorStoreError) as exc:
             repo.update_job(job.id, status=JobStatus.FAILED, stage="failed", error=str(exc))
+            from app.services.webhooks import dispatch_job_event
+
+            dispatch_job_event(job, "job.failed", error=str(exc))
             return
         except Exception as exc:  # never let a worker die silently
             _log.exception("Ingestion job %s crashed", job.id)
-            repo.update_job(
-                job.id, status=JobStatus.FAILED, stage="failed", error=f"{type(exc).__name__}: {exc}"
-            )
+            err_msg = f"{type(exc).__name__}: {exc}"
+            repo.update_job(job.id, status=JobStatus.FAILED, stage="failed", error=err_msg)
+            from app.services.webhooks import dispatch_job_event
+
+            dispatch_job_event(job, "job.failed", error=err_msg)
             return
+        res_data = {
+            "source_id": result.source.id,
+            "segments": len(result.segments),
+            "entities": result.entity_count,
+            "relations": result.relation_count,
+            "links": result.link_count,
+        }
         repo.update_job(
             job.id,
             status=JobStatus.SUCCEEDED,
             stage="done",
             progress=1.0,
             warnings=pipeline.warnings,
-            result={
-                "source_id": result.source.id,
-                "segments": len(result.segments),
-                "entities": result.entity_count,
-                "relations": result.relation_count,
-                "links": result.link_count,
-            },
+            result=res_data,
         )
+        from app.services.webhooks import dispatch_job_event
+
+        dispatch_job_event(job, "job.completed", result=res_data)
 
     def resume_interrupted(self) -> int:
         """Re-queue jobs left queued/running by a previous process."""
